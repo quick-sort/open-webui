@@ -2276,6 +2276,10 @@ QDRANT_TIMEOUT = int(os.environ.get('QDRANT_TIMEOUT', '5'))
 QDRANT_HNSW_M = int(os.environ.get('QDRANT_HNSW_M', '16'))
 ENABLE_QDRANT_MULTITENANCY_MODE = os.environ.get('ENABLE_QDRANT_MULTITENANCY_MODE', 'true').lower() == 'true'
 QDRANT_COLLECTION_PREFIX = os.environ.get('QDRANT_COLLECTION_PREFIX', 'open-webui')
+QDRANT_QUANTIZATION = os.environ.get('QDRANT_QUANTIZATION', 'none')  # none, scalar, binary, product
+QDRANT_QUANTIZATION_SCALAR_TYPE = os.environ.get('QDRANT_QUANTIZATION_SCALAR_TYPE', 'int8')
+QDRANT_QUANTIZATION_SCALAR_QUANTILE = float(os.environ.get('QDRANT_QUANTIZATION_SCALAR_QUANTILE', '0.99'))
+QDRANT_QUANTIZATION_ALWAYS_RAM = os.environ.get('QDRANT_QUANTIZATION_ALWAYS_RAM', 'false').lower() == 'true'
 
 WEAVIATE_HTTP_HOST = os.environ.get('WEAVIATE_HTTP_HOST', '')
 WEAVIATE_GRPC_HOST = os.environ.get('WEAVIATE_GRPC_HOST', '')

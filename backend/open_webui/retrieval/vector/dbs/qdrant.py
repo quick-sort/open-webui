@@ -25,6 +25,10 @@ from open_webui.config import (
     QDRANT_COLLECTION_PREFIX,
     QDRANT_TIMEOUT,
     QDRANT_HNSW_M,
+    QDRANT_QUANTIZATION,
+    QDRANT_QUANTIZATION_SCALAR_TYPE,
+    QDRANT_QUANTIZATION_SCALAR_QUANTILE,
+    QDRANT_QUANTIZATION_ALWAYS_RAM,
 )
 
 NO_LIMIT = 999999999
@@ -42,6 +46,10 @@ class QdrantClient(VectorDBBase):
         self.GRPC_PORT = QDRANT_GRPC_PORT
         self.QDRANT_TIMEOUT = QDRANT_TIMEOUT
         self.QDRANT_HNSW_M = QDRANT_HNSW_M
+        self.QUANTIZATION = QDRANT_QUANTIZATION
+        self.QUANTIZATION_SCALAR_TYPE = QDRANT_QUANTIZATION_SCALAR_TYPE
+        self.QUANTIZATION_SCALAR_QUANTILE = QDRANT_QUANTIZATION_SCALAR_QUANTILE
+        self.QUANTIZATION_ALWAYS_RAM = QDRANT_QUANTIZATION_ALWAYS_RAM
 
         if not self.QDRANT_URI:
             self.client = None
@@ -87,6 +95,32 @@ class QdrantClient(VectorDBBase):
             }
         )
 
+    def _get_quantization_config(self) -> Optional[models.QuantizationConfig]:
+        match self.QUANTIZATION:
+            case 'scalar':
+                return models.ScalarQuantization(
+                    scalar=models.ScalarQuantizationConfig(
+                        type=models.ScalarType.INT8,
+                        quantile=self.QUANTIZATION_SCALAR_QUANTILE,
+                        always_ram=self.QUANTIZATION_ALWAYS_RAM,
+                    ),
+                )
+            case 'binary':
+                return models.BinaryQuantization(
+                    binary=models.BinaryQuantizationConfig(
+                        always_ram=self.QUANTIZATION_ALWAYS_RAM,
+                    ),
+                )
+            case 'product':
+                return models.ProductQuantization(
+                    product=models.ProductQuantizationConfig(
+                        num_subquantizers=256,
+                        num_centroids=16,
+                    ),
+                )
+            case _:
+                return None
+
     def _create_collection(self, collection_name: str, dimension: int):
         collection_name_with_prefix = f'{self.collection_prefix}_{collection_name}'
         self.client.create_collection(
@@ -99,6 +133,7 @@ class QdrantClient(VectorDBBase):
             hnsw_config=models.HnswConfigDiff(
                 m=self.QDRANT_HNSW_M,
             ),
+            quantization_config=self._get_quantization_config(),
         )
 
         # Create payload indexes for efficient filtering

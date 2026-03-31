@@ -16,6 +16,10 @@ from open_webui.config import (
     QDRANT_COLLECTION_PREFIX,
     QDRANT_TIMEOUT,
     QDRANT_HNSW_M,
+    QDRANT_QUANTIZATION,
+    QDRANT_QUANTIZATION_SCALAR_TYPE,
+    QDRANT_QUANTIZATION_SCALAR_QUANTILE,
+    QDRANT_QUANTIZATION_ALWAYS_RAM,
 )
 from open_webui.retrieval.vector.main import (
     GetResult,
@@ -53,6 +57,10 @@ class QdrantClient(VectorDBBase):
         self.GRPC_PORT = QDRANT_GRPC_PORT
         self.QDRANT_TIMEOUT = QDRANT_TIMEOUT
         self.QDRANT_HNSW_M = QDRANT_HNSW_M
+        self.QUANTIZATION = QDRANT_QUANTIZATION
+        self.QUANTIZATION_SCALAR_TYPE = QDRANT_QUANTIZATION_SCALAR_TYPE
+        self.QUANTIZATION_SCALAR_QUANTILE = QDRANT_QUANTIZATION_SCALAR_QUANTILE
+        self.QUANTIZATION_ALWAYS_RAM = QDRANT_QUANTIZATION_ALWAYS_RAM
 
         if not self.QDRANT_URI:
             raise ValueError('QDRANT_URI is not set. Please configure it in the environment variables.')
@@ -130,6 +138,32 @@ class QdrantClient(VectorDBBase):
         else:
             return self.KNOWLEDGE_COLLECTION, tenant_id
 
+    def _get_quantization_config(self) -> Optional[models.QuantizationConfig]:
+        match self.QUANTIZATION:
+            case 'scalar':
+                return models.ScalarQuantization(
+                    scalar=models.ScalarQuantizationConfig(
+                        type=models.ScalarType.INT8,
+                        quantile=self.QUANTIZATION_SCALAR_QUANTILE,
+                        always_ram=self.QUANTIZATION_ALWAYS_RAM,
+                    ),
+                )
+            case 'binary':
+                return models.BinaryQuantization(
+                    binary=models.BinaryQuantizationConfig(
+                        always_ram=self.QUANTIZATION_ALWAYS_RAM,
+                    ),
+                )
+            case 'product':
+                return models.ProductQuantization(
+                    product=models.ProductQuantizationConfig(
+                        num_subquantizers=256,
+                        num_centroids=16,
+                    ),
+                )
+            case _:
+                return None
+
     def _create_multi_tenant_collection(self, mt_collection_name: str, dimension: int = DEFAULT_DIMENSION):
         """
         Creates a collection with multi-tenancy configuration and payload indexes for tenant_id and metadata fields.
@@ -147,6 +181,7 @@ class QdrantClient(VectorDBBase):
                 payload_m=self.QDRANT_HNSW_M,
                 m=0,
             ),
+            quantization_config=self._get_quantization_config(),
         )
         log.info(f'Multi-tenant collection {mt_collection_name} created with dimension {dimension}!')
 
