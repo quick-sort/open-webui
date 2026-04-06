@@ -2274,6 +2274,8 @@ QDRANT_PREFER_GRPC = os.environ.get('QDRANT_PREFER_GRPC', 'false').lower() == 't
 QDRANT_GRPC_PORT = int(os.environ.get('QDRANT_GRPC_PORT', '6334'))
 QDRANT_TIMEOUT = int(os.environ.get('QDRANT_TIMEOUT', '5'))
 QDRANT_HNSW_M = int(os.environ.get('QDRANT_HNSW_M', '16'))
+QDRANT_HNSW_EF_CONSTRUCT = int(os.environ.get('QDRANT_HNSW_EF_CONSTRUCT', '100'))
+QDRANT_HNSW_ON_DISK = os.environ.get('QDRANT_HNSW_ON_DISK', 'false').lower() == 'true'
 ENABLE_QDRANT_MULTITENANCY_MODE = os.environ.get('ENABLE_QDRANT_MULTITENANCY_MODE', 'true').lower() == 'true'
 QDRANT_COLLECTION_PREFIX = os.environ.get('QDRANT_COLLECTION_PREFIX', 'open-webui')
 QDRANT_QUANTIZATION = os.environ.get('QDRANT_QUANTIZATION', 'none')  # none, scalar, binary, product
