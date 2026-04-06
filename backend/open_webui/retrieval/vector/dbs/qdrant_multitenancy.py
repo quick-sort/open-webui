@@ -16,6 +16,8 @@ from open_webui.config import (
     QDRANT_COLLECTION_PREFIX,
     QDRANT_TIMEOUT,
     QDRANT_HNSW_M,
+    QDRANT_HNSW_EF_CONSTRUCT,
+    QDRANT_HNSW_ON_DISK,
     QDRANT_QUANTIZATION,
     QDRANT_QUANTIZATION_SCALAR_TYPE,
     QDRANT_QUANTIZATION_SCALAR_QUANTILE,
@@ -57,6 +59,8 @@ class QdrantClient(VectorDBBase):
         self.GRPC_PORT = QDRANT_GRPC_PORT
         self.QDRANT_TIMEOUT = QDRANT_TIMEOUT
         self.QDRANT_HNSW_M = QDRANT_HNSW_M
+        self.QDRANT_HNSW_EF_CONSTRUCT = QDRANT_HNSW_EF_CONSTRUCT
+        self.QDRANT_HNSW_ON_DISK = QDRANT_HNSW_ON_DISK
         self.QUANTIZATION = QDRANT_QUANTIZATION
         self.QUANTIZATION_SCALAR_TYPE = QDRANT_QUANTIZATION_SCALAR_TYPE
         self.QUANTIZATION_SCALAR_QUANTILE = QDRANT_QUANTIZATION_SCALAR_QUANTILE
@@ -179,6 +183,8 @@ class QdrantClient(VectorDBBase):
             # For more details https://qdrant.tech/documentation/guides/multiple-partitions/#calibrate-performance
             hnsw_config=models.HnswConfigDiff(
                 payload_m=self.QDRANT_HNSW_M,
+                ef_construct=self.QDRANT_HNSW_EF_CONSTRUCT,
+                on_disk=self.QDRANT_HNSW_ON_DISK,
                 m=0,
             ),
             quantization_config=self._get_quantization_config(),
