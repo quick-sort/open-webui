@@ -6,10 +6,10 @@ import logging
 from typing import Optional, Tuple, List, Dict, Any
 from urllib.parse import urlparse
 
-import grpc
 from open_webui.config import (
     QDRANT_API_KEY,
     QDRANT_GRPC_PORT,
+    QDRANT_GRPC_HTTPS,
     QDRANT_ON_DISK,
     QDRANT_PREFER_GRPC,
     QDRANT_URI,
@@ -57,6 +57,7 @@ class QdrantClient(VectorDBBase):
         self.QDRANT_ON_DISK = QDRANT_ON_DISK
         self.PREFER_GRPC = QDRANT_PREFER_GRPC
         self.GRPC_PORT = QDRANT_GRPC_PORT
+        self.GRPC_HTTPS = QDRANT_GRPC_HTTPS
         self.QDRANT_TIMEOUT = QDRANT_TIMEOUT
         self.QDRANT_HNSW_M = QDRANT_HNSW_M
         self.QDRANT_HNSW_EF_CONSTRUCT = QDRANT_HNSW_EF_CONSTRUCT
@@ -82,6 +83,7 @@ class QdrantClient(VectorDBBase):
                 prefer_grpc=self.PREFER_GRPC,
                 api_key=self.QDRANT_API_KEY,
                 timeout=self.QDRANT_TIMEOUT,
+                https=self.GRPC_HTTPS,
             )
             if self.PREFER_GRPC
             else Qclient(
