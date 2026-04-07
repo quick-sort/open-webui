@@ -822,7 +822,7 @@ jobs:
   copy-to-dockerhub:
     if: false
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    # if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     needs: [merge-main-images, merge-cuda-images, merge-cuda126-images, merge-ollama-images, merge-slim-images]
     continue-on-error: true
     strategy:
