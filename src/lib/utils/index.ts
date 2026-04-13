@@ -233,7 +233,7 @@ export const getGravatarURL = (email) => {
 	const hash = sha256(address);
 
 	// Grab the actual image URL
-	return `https://www.gravatar.com/avatar/${hash}`;
+	return `/static/favicon.png`;
 };
 
 export const canvasPixelTest = () => {

@@ -66,7 +66,7 @@
 					<div class=" flex justify-center items-center gap-3">
 						<div class="w-fit">
 							<img
-								src="https://www.google.com/s2/favicons?sz=32&domain={item.link}"
+								src="/static/favicon.png"
 								alt="{item?.title ?? item.link} favicon"
 								class="size-3.5"
 							/>
@@ -106,7 +106,7 @@
 					<div class=" flex justify-center items-center gap-3">
 						<div class="w-fit">
 							<img
-								src="https://www.google.com/s2/favicons?sz=32&domain={url}"
+								src="/static/favicon.png"
 								alt="{url} favicon"
 								class="size-3.5"
 							/>
