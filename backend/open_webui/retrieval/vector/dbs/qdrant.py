@@ -4,6 +4,7 @@ NOTE: This vector database integration is community-supported and maintained on 
 
 from typing import Optional
 import logging
+import requests
 from urllib.parse import urlparse
 
 from qdrant_client import QdrantClient as Qclient
@@ -32,11 +33,90 @@ from open_webui.config import (
     QDRANT_QUANTIZATION_SCALAR_TYPE,
     QDRANT_QUANTIZATION_SCALAR_QUANTILE,
     QDRANT_QUANTIZATION_ALWAYS_RAM,
+    QDRANT_HYBRID_SEARCH,
+    QDRANT_SPARSE_EMBEDDING_API_URL,
+    QDRANT_SPARSE_EMBEDDING_API_KEY,
+    QDRANT_SPARSE_EMBEDDING_MODEL,
 )
 
 NO_LIMIT = 999999999
+DENSE_VECTOR_NAME = 'dense'
+SPARSE_VECTOR_NAME = 'sparse'
 
 log = logging.getLogger(__name__)
+
+
+def _generate_sparse_vector(text: str) -> Optional[models.SparseVector]:
+    """Call external sparse embedding API to generate a sparse vector."""
+    if not QDRANT_SPARSE_EMBEDDING_API_URL or not QDRANT_SPARSE_EMBEDDING_MODEL:
+        return None
+    try:
+        headers = {'Content-Type': 'application/json'}
+        if QDRANT_SPARSE_EMBEDDING_API_KEY:
+            headers['Authorization'] = f'Bearer {QDRANT_SPARSE_EMBEDDING_API_KEY}'
+        r = requests.post(
+            f'{QDRANT_SPARSE_EMBEDDING_API_URL}/embeddings',
+            headers=headers,
+            json={'input': text, 'model': QDRANT_SPARSE_EMBEDDING_MODEL},
+            timeout=30,
+        )
+        r.raise_for_status()
+        data = r.json()
+        embedding = data['data'][0]['embedding']
+        # Sparse embedding API returns list of {index, value} or a dict with indices/values
+        if isinstance(embedding, dict):
+            return models.SparseVector(
+                indices=embedding['indices'],
+                values=embedding['values'],
+            )
+        elif isinstance(embedding, list) and embedding and isinstance(embedding[0], dict):
+            return models.SparseVector(
+                indices=[e['index'] for e in embedding],
+                values=[e['value'] for e in embedding],
+            )
+        else:
+            log.warning(f'Unexpected sparse embedding format: {type(embedding)}')
+            return None
+    except Exception as e:
+        log.exception(f'Error generating sparse vector: {e}')
+        return None
+
+
+def _generate_sparse_vectors_batch(texts: list[str]) -> list[Optional[models.SparseVector]]:
+    """Batch generate sparse vectors for multiple texts."""
+    if not QDRANT_SPARSE_EMBEDDING_API_URL or not QDRANT_SPARSE_EMBEDDING_MODEL:
+        return [None] * len(texts)
+    try:
+        headers = {'Content-Type': 'application/json'}
+        if QDRANT_SPARSE_EMBEDDING_API_KEY:
+            headers['Authorization'] = f'Bearer {QDRANT_SPARSE_EMBEDDING_API_KEY}'
+        r = requests.post(
+            f'{QDRANT_SPARSE_EMBEDDING_API_URL}/embeddings',
+            headers=headers,
+            json={'input': texts, 'model': QDRANT_SPARSE_EMBEDDING_MODEL},
+            timeout=60,
+        )
+        r.raise_for_status()
+        data = r.json()
+        results = []
+        for item in data['data']:
+            embedding = item['embedding']
+            if isinstance(embedding, dict):
+                results.append(models.SparseVector(
+                    indices=embedding['indices'],
+                    values=embedding['values'],
+                ))
+            elif isinstance(embedding, list) and embedding and isinstance(embedding[0], dict):
+                results.append(models.SparseVector(
+                    indices=[e['index'] for e in embedding],
+                    values=[e['value'] for e in embedding],
+                ))
+            else:
+                results.append(None)
+        return results
+    except Exception as e:
+        log.exception(f'Error generating sparse vectors batch: {e}')
+        return [None] * len(texts)
 
 
 class QdrantClient(VectorDBBase):
@@ -56,6 +136,7 @@ class QdrantClient(VectorDBBase):
         self.QUANTIZATION_SCALAR_TYPE = QDRANT_QUANTIZATION_SCALAR_TYPE
         self.QUANTIZATION_SCALAR_QUANTILE = QDRANT_QUANTIZATION_SCALAR_QUANTILE
         self.QUANTIZATION_ALWAYS_RAM = QDRANT_QUANTIZATION_ALWAYS_RAM
+        self.HYBRID_SEARCH = QDRANT_HYBRID_SEARCH
 
         if not self.QDRANT_URI:
             self.client = None
@@ -130,13 +211,30 @@ class QdrantClient(VectorDBBase):
 
     def _create_collection(self, collection_name: str, dimension: int):
         collection_name_with_prefix = f'{self.collection_prefix}_{collection_name}'
-        self.client.create_collection(
-            collection_name=collection_name_with_prefix,
-            vectors_config=models.VectorParams(
+
+        if self.HYBRID_SEARCH:
+            vectors_config = {
+                DENSE_VECTOR_NAME: models.VectorParams(
+                    size=dimension,
+                    distance=models.Distance.COSINE,
+                    on_disk=self.QDRANT_ON_DISK,
+                ),
+            }
+            sparse_vectors_config = {
+                SPARSE_VECTOR_NAME: models.SparseVectorParams(),
+            }
+        else:
+            vectors_config = models.VectorParams(
                 size=dimension,
                 distance=models.Distance.COSINE,
                 on_disk=self.QDRANT_ON_DISK,
-            ),
+            )
+            sparse_vectors_config = None
+
+        self.client.create_collection(
+            collection_name=collection_name_with_prefix,
+            vectors_config=vectors_config,
+            sparse_vectors_config=sparse_vectors_config,
             hnsw_config=models.HnswConfigDiff(
                 m=self.QDRANT_HNSW_M,
                 ef_construct=self.QDRANT_HNSW_EF_CONSTRUCT,
@@ -171,14 +269,29 @@ class QdrantClient(VectorDBBase):
             self._create_collection(collection_name=collection_name, dimension=dimension)
 
     def _create_points(self, items: list[VectorItem]):
-        return [
-            PointStruct(
-                id=item['id'],
-                vector=item['vector'],
-                payload={'text': item['text'], 'metadata': item['metadata']},
-            )
-            for item in items
-        ]
+        if self.HYBRID_SEARCH:
+            texts = [item['text'] for item in items]
+            sparse_vectors = _generate_sparse_vectors_batch(texts)
+            points = []
+            for item, sv in zip(items, sparse_vectors):
+                vector = {DENSE_VECTOR_NAME: item['vector']}
+                if sv is not None:
+                    vector[SPARSE_VECTOR_NAME] = sv
+                points.append(PointStruct(
+                    id=item['id'],
+                    vector=vector,
+                    payload={'text': item['text'], 'metadata': item['metadata']},
+                ))
+            return points
+        else:
+            return [
+                PointStruct(
+                    id=item['id'],
+                    vector=item['vector'],
+                    payload={'text': item['text'], 'metadata': item['metadata']},
+                )
+                for item in items
+            ]
 
     def has_collection(self, collection_name: str) -> bool:
         return self.client.collection_exists(f'{self.collection_prefix}_{collection_name}')
@@ -192,16 +305,55 @@ class QdrantClient(VectorDBBase):
         vectors: list[list[float | int]],
         filter: Optional[dict] = None,
         limit: int = 10,
+        **kwargs,
     ) -> Optional[SearchResult]:
         # Search for the nearest neighbor items based on the vectors and return 'limit' number of results.
         if limit is None:
             limit = NO_LIMIT  # otherwise qdrant would set limit to 10!
 
-        query_response = self.client.query_points(
-            collection_name=f'{self.collection_prefix}_{collection_name}',
-            query=vectors[0],
-            limit=limit,
-        )
+        collection = f'{self.collection_prefix}_{collection_name}'
+        query_text = kwargs.get('query_text')
+
+        # Hybrid search: prefetch dense + sparse, fuse with RRF
+        if self.HYBRID_SEARCH and query_text:
+            sparse_vector = _generate_sparse_vector(query_text)
+            if sparse_vector is not None:
+                prefetch_limit = limit * 2
+                query_response = self.client.query_points(
+                    collection_name=collection,
+                    prefetch=[
+                        models.Prefetch(
+                            query=vectors[0],
+                            using=DENSE_VECTOR_NAME,
+                            limit=prefetch_limit,
+                        ),
+                        models.Prefetch(
+                            query=sparse_vector,
+                            using=SPARSE_VECTOR_NAME,
+                            limit=prefetch_limit,
+                        ),
+                    ],
+                    query=models.FusionQuery(fusion=models.Fusion.RRF),
+                    limit=limit,
+                )
+                get_result = self._result_to_get_result(query_response.points)
+                return SearchResult(
+                    ids=get_result.ids,
+                    documents=get_result.documents,
+                    metadatas=get_result.metadatas,
+                    distances=[[(point.score + 1.0) / 2.0 for point in query_response.points]],
+                )
+
+        # Fallback: dense-only search
+        query_args = {
+            'collection_name': collection,
+            'query': vectors[0],
+            'limit': limit,
+        }
+        if self.HYBRID_SEARCH:
+            query_args['using'] = DENSE_VECTOR_NAME
+
+        query_response = self.client.query_points(**query_args)
         get_result = self._result_to_get_result(query_response.points)
         return SearchResult(
             ids=get_result.ids,
