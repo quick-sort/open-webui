@@ -1,44 +1,13 @@
-<script>
-	import { onDestroy } from 'svelte';
+<script context="module">
 	import { marked } from 'marked';
-	import { replaceTokens, processResponseContent } from '$lib/utils';
-	import { user } from '$lib/stores';
 
 	import markedExtension from '$lib/utils/marked/extension';
 	import markedKatexExtension from '$lib/utils/marked/katex-extension';
 	import { disableSingleTilde } from '$lib/utils/marked/strikethrough-extension';
 	import { mentionExtension } from '$lib/utils/marked/mention-extension';
 	import colonFenceExtension from '$lib/utils/marked/colon-fence-extension';
-
-	import MarkdownTokens from './Markdown/MarkdownTokens.svelte';
 	import footnoteExtension from '$lib/utils/marked/footnote-extension';
 	import citationExtension from '$lib/utils/marked/citation-extension';
-
-	export let id = '';
-	export let content;
-	export let done = true;
-	export let model = null;
-	export let save = false;
-	export let preview = false;
-
-	export let paragraphTag = 'p';
-	export let editCodeBlock = true;
-	export let topPadding = false;
-
-	export let sourceIds = [];
-
-	export let onSave = () => {};
-	export let onUpdate = () => {};
-
-	export let onPreview = () => {};
-
-	export let onSourceClick = () => {};
-	export let onTaskClick = () => {};
-
-	let tokens = [];
-	let pendingUpdate = null;
-	let lastContent = '';
-	let lastParsedContent = '';
 
 	const options = {
 		throwOnError: false,
@@ -58,6 +27,41 @@
 			mentionExtension({ triggerChar: '$' })
 		]
 	});
+</script>
+
+<script>
+	import { onDestroy } from 'svelte';
+	import { replaceTokens, processResponseContent } from '$lib/utils';
+	import { user } from '$lib/stores';
+
+	import MarkdownTokens from './Markdown/MarkdownTokens.svelte';
+
+	export let id = '';
+	export let content;
+	export let done = true;
+	export let model = null;
+	export let save = false;
+	export let preview = false;
+
+	export let paragraphTag = 'p';
+	export let editCodeBlock = true;
+	export let topPadding = false;
+	export let allowEmbeds = true;
+
+	export let sourceIds = [];
+
+	export let onSave = () => {};
+	export let onUpdate = () => {};
+
+	export let onPreview = () => {};
+
+	export let onSourceClick = () => {};
+	export let onTaskClick = () => {};
+
+	let tokens = [];
+	let pendingUpdate = null;
+	let lastContent = '';
+	let lastParsedContent = '';
 
 	const parseTokens = () => {
 		if (content === lastContent) return;
@@ -88,7 +92,7 @@
 	$: updateHandler(content);
 
 	// Throttle parsing to once per animation frame while streaming
-	$: onDestroy(() => {
+	onDestroy(() => {
 		cancelAnimationFrame(pendingUpdate);
 	});
 </script>
@@ -104,6 +108,7 @@
 		{editCodeBlock}
 		{sourceIds}
 		{topPadding}
+		{allowEmbeds}
 		{onTaskClick}
 		{onSourceClick}
 		{onSave}

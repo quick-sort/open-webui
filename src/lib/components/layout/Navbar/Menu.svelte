@@ -7,6 +7,7 @@
 
 	import { downloadChatAsPDF } from '$lib/apis/utils';
 	import { copyToClipboard, createMessagesList } from '$lib/utils';
+	import { getOutputText } from '$lib/components/chat/Messages/structuredOutput';
 
 	import {
 		showControls,
@@ -32,22 +33,26 @@
 	import Folder from '$lib/components/icons/Folder.svelte';
 	import Share from '$lib/components/icons/Share.svelte';
 	import ArchiveBox from '$lib/components/icons/ArchiveBox.svelte';
+	import GarbageBin from '$lib/components/icons/GarbageBin.svelte';
 	import Messages from '$lib/components/chat/Messages.svelte';
 	import Download from '$lib/components/icons/Download.svelte';
 
 	const i18n = getContext('i18n');
 
 	export let shareEnabled: boolean = false;
+	export let readOnly: boolean = false;
 
 	export let shareHandler: Function;
 	export let moveChatHandler: Function;
 
 	export let archiveChatHandler: Function;
+	export let deleteChatHandler: Function;
 
 	// export let tagHandler: Function;
 
 	export let chat;
 	export let onClose: Function = () => {};
+	export let scrollToTop: (() => void) | null = null;
 
 	let showFullMessages = false;
 
@@ -55,7 +60,8 @@
 		const history = chat.chat.history;
 		const messages = createMessagesList(history, history.currentId);
 		const chatText = messages.reduce((a, message, i, arr) => {
-			return `${a}### ${message.role.toUpperCase()}\n${message.content}\n\n`;
+			const content = getOutputText(message.output) || message.content || '';
+			return `${a}### ${message.role.toUpperCase()}\n${content}\n\n`;
 		}, '');
 
 		return chatText.trim();
@@ -97,8 +103,13 @@
 					clonedElement.style.height = 'auto';
 					document.body.appendChild(clonedElement);
 
-					// Wait for DOM update/layout
-					await new Promise((r) => setTimeout(r, 100));
+					// Override content-visibility so html2canvas can capture all messages
+					clonedElement.querySelectorAll('.message-listitem').forEach((el) => {
+						el.style.contentVisibility = 'visible';
+					});
+
+					// Let the browser compute layout for the cloned element
+					await new Promise((r) => requestAnimationFrame(r));
 
 					// Render entire content once
 					const canvas = await html2canvas(clonedElement, {
@@ -308,6 +319,35 @@
 				</svg>
 				<div class="flex items-center">{$i18n.t('Settings')}</div>
 			</DropdownMenu.Item> -->
+			<!-- Settings commented out block above -->
+
+			{#if scrollToTop}
+				<button
+					draggable="false"
+					class="flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl select-none w-full"
+					on:click={() => {
+						scrollToTop();
+					}}
+				>
+					<svg
+						xmlns="http://www.w3.org/2000/svg"
+						fill="none"
+						viewBox="0 0 24 24"
+						stroke-width="1.5"
+						stroke="currentColor"
+						class="size-4"
+					>
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							d="M4.5 10.5 12 3m0 0 7.5 7.5M12 3v18"
+						/>
+					</svg>
+					<div class="flex items-center">{$i18n.t('Scroll to Top')}</div>
+				</button>
+
+				<hr class="border-gray-50/30 dark:border-gray-800/30 my-1" />
+			{/if}
 
 			{#if ($artifactContents ?? []).length > 0}
 				<button
@@ -327,7 +367,7 @@
 				<hr class="border-gray-50/30 dark:border-gray-800/30 my-1" />
 			{/if}
 
-			{#if !$temporaryChatEnabled && ($user?.role === 'admin' || ($user.permissions?.chat?.share ?? true))}
+			{#if !readOnly && !$temporaryChatEnabled && ($user?.role === 'admin' || ($user.permissions?.chat?.share ?? true))}
 				<button
 					draggable="false"
 					class="flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl select-none w-full"
@@ -341,17 +381,18 @@
 				</button>
 			{/if}
 
-			<DropdownSub>
-				<button
-					slot="trigger"
-					draggable="false"
-					class="flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl select-none w-full"
-				>
-					<Download strokeWidth="1.5" />
+			{#if $user?.role === 'admin' || ($user.permissions?.chat?.export ?? true)}
+				<DropdownSub>
+					<button
+						slot="trigger"
+						draggable="false"
+						class="flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl select-none w-full"
+					>
+						<Download strokeWidth="1.5" />
 
-					<div class="flex items-center">{$i18n.t('Download')}</div>
-				</button>
-				{#if $user?.role === 'admin' || ($user.permissions?.chat?.export ?? true)}
+						<div class="flex items-center">{$i18n.t('Download')}</div>
+					</button>
+
 					<button
 						draggable="false"
 						class="flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl select-none w-full"
@@ -361,27 +402,28 @@
 					>
 						<div class="flex items-center line-clamp-1">{$i18n.t('Export chat (.json)')}</div>
 					</button>
-				{/if}
-				<button
-					draggable="false"
-					class="flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl select-none w-full"
-					on:click={() => {
-						downloadTxt();
-					}}
-				>
-					<div class="flex items-center line-clamp-1">{$i18n.t('Plain text (.txt)')}</div>
-				</button>
 
-				<button
-					draggable="false"
-					class="flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl select-none w-full"
-					on:click={() => {
-						downloadPdf();
-					}}
-				>
-					<div class="flex items-center line-clamp-1">{$i18n.t('PDF document (.pdf)')}</div>
-				</button>
-			</DropdownSub>
+					<button
+						draggable="false"
+						class="flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl select-none w-full"
+						on:click={() => {
+							downloadTxt();
+						}}
+					>
+						<div class="flex items-center line-clamp-1">{$i18n.t('Plain text (.txt)')}</div>
+					</button>
+
+					<button
+						draggable="false"
+						class="flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl select-none w-full"
+						on:click={() => {
+							downloadPdf();
+						}}
+					>
+						<div class="flex items-center line-clamp-1">{$i18n.t('PDF document (.pdf)')}</div>
+					</button>
+				</DropdownSub>
+			{/if}
 
 			<button
 				draggable="false"
@@ -401,7 +443,7 @@
 				<div class="flex items-center">{$i18n.t('Copy')}</div>
 			</button>
 
-			{#if !$temporaryChatEnabled && chat?.id}
+			{#if !readOnly && !$temporaryChatEnabled && chat?.id}
 				<hr class="border-gray-50/30 dark:border-gray-800/30 my-1" />
 
 				{#if $folders.length > 0}
@@ -446,9 +488,20 @@
 					<div class="flex items-center">{$i18n.t('Archive')}</div>
 				</button>
 
+				<button
+					draggable="false"
+					class="flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl select-none w-full"
+					on:click={() => {
+						deleteChatHandler();
+					}}
+				>
+					<GarbageBin strokeWidth="1.5" />
+					<div class="flex items-center">{$i18n.t('Delete')}</div>
+				</button>
+
 				<hr class="border-gray-50/30 dark:border-gray-800/30 my-1" />
 
-				<div class="flex p-1">
+				<div class="flex p-1 max-h-28 overflow-y-auto">
 					<Tags chatId={chat.id} />
 				</div>
 			{/if}

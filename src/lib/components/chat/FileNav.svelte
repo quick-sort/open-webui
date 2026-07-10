@@ -25,7 +25,9 @@
 		deleteEntry,
 		moveEntry,
 		setCwd,
-		type FileEntry
+		type FileEntry,
+		type TerminalFileRoot,
+		type TerminalCwd
 	} from '$lib/apis/terminal';
 	import { isCodeFile } from '$lib/utils/codeHighlight';
 	import Folder from '../icons/Folder.svelte';
@@ -49,6 +51,7 @@
 
 	export let onAttach: ((blob: Blob, name: string, contentType: string) => void) | null = null;
 	export let overlay = false;
+	export let chatId: string | null = null;
 
 	// ── Terminal panel state ────────────────────────────────────────────
 	let terminalExpanded = false;
@@ -87,9 +90,39 @@
 
 	// ── Directory state ──────────────────────────────────────────────────
 	let currentPath = savedPath;
+	let fileRoot: TerminalFileRoot | null = null;
 	let entries: FileEntry[] = [];
 	let loading = false;
 	let error: string | null = null;
+
+	// ── Sort state ──────────────────────────────────────────────────────
+	type SortMode = 'name' | 'date';
+	let sortBy: SortMode = 'name';
+	let sortAsc = true;
+
+	const sortEntries = (items: FileEntry[]): FileEntry[] => {
+		return [...items].sort((a, b) => {
+			// Directories always first
+			if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
+			if (sortBy === 'date') {
+				const aTime = a.modified ?? 0;
+				const bTime = b.modified ?? 0;
+				return sortAsc ? aTime - bTime : bTime - aTime;
+			}
+			const cmp = a.name.localeCompare(b.name);
+			return sortAsc ? cmp : -cmp;
+		});
+	};
+
+	const toggleSort = (mode: SortMode) => {
+		if (sortBy === mode) {
+			sortAsc = !sortAsc;
+		} else {
+			sortBy = mode;
+			sortAsc = mode === 'name'; // name defaults asc, date defaults asc (oldest first)
+		}
+		entries = sortEntries(entries);
+	};
 
 	// ── Navigation history ──────────────────────────────────────────────
 	type NavEntry = { path: string; file: string | null };
@@ -215,30 +248,45 @@
 		return url ? { url, key } : null;
 	};
 
-	// Detect terminal changes — the explicit store references ensure
+	// Detect terminal or chat changes — the explicit store references ensure
 	// Svelte re-runs this block when any of them update.
+	// The `mounted` flag prevents the initial run from racing with onMount.
 	let prevTerminalUrl = '';
+	let prevChatId = chatId;
+	let mounted = false;
 	$: {
 		($selectedTerminalId, $terminalServers, $settings);
 		const terminal = getTerminal();
 		selectedTerminal = terminal;
 
-		if (terminal && terminal.url !== prevTerminalUrl) {
-			prevTerminalUrl = terminal.url;
-			loading = true;
-			error = null;
-			entries = [];
-			(async () => {
-				// Discover server features (terminal enabled/disabled)
-				const config = await getTerminalConfig(terminal.url, terminal.key);
-				terminalEnabled = config?.features?.terminal !== false;
+		const chatChanged = chatId !== prevChatId;
+		const oldChatId = prevChatId;
+		if (chatChanged) prevChatId = chatId;
 
-				const rawCwd = await getCwd(terminal.url, terminal.key);
-				const cwd = rawCwd ? normalizePath(rawCwd) : null;
-				const dir = cwd ? (cwd.endsWith('/') ? cwd : cwd + '/') : '/';
-				savedPath = dir;
-				loadDir(dir);
-			})();
+		const terminalChanged = terminal && terminal.url !== prevTerminalUrl;
+		if (terminalChanged) prevTerminalUrl = terminal.url;
+
+		if (mounted && terminal) {
+			if (chatChanged && chatId && !oldChatId) {
+				// Chat just got created (null → real ID): persist the current
+				// browsed path as the new session's cwd — don't re-fetch.
+				setCwd(terminal.url, terminal.key, savedPath, chatId);
+			} else if (terminalChanged || chatChanged) {
+				// Terminal switched, new chat started, or switched between
+				// existing chats — re-fetch the session cwd.
+				loading = true;
+				error = null;
+				entries = [];
+				(async () => {
+					if (terminalChanged) {
+						const config = await getTerminalConfig(terminal.url, terminal.key);
+						terminalEnabled = config?.features?.terminal !== false;
+					}
+
+					savedPath = applyCwd(await getCwd(terminal.url, terminal.key, chatId ?? undefined));
+					loadDir(savedPath);
+				})();
+			}
 		}
 	}
 
@@ -257,7 +305,52 @@
 	/** Normalize Windows backslashes to forward slashes. */
 	const normalizePath = (p: string) => p.replace(/\\/g, '/');
 
+	const asDirectoryPath = (path: string) => {
+		const normalized = normalizePath(path || '/');
+		return normalized.endsWith('/') ? normalized : `${normalized}/`;
+	};
+
+	const setFileRoot = (root?: TerminalFileRoot) => {
+		fileRoot = root?.path
+			? {
+					path: asDirectoryPath(root.path),
+					label: root.label || 'Home'
+				}
+			: null;
+	};
+
+	const isInsideFileRoot = (path: string) => {
+		if (!fileRoot) return true;
+		const directory = asDirectoryPath(path);
+		return directory === fileRoot.path || directory.startsWith(fileRoot.path);
+	};
+
+	const clampToFileRoot = (path: string) => {
+		if (!fileRoot) return asDirectoryPath(path);
+		return isInsideFileRoot(path) ? asDirectoryPath(path) : fileRoot.path;
+	};
+
+	const applyCwd = (cwd: TerminalCwd | null) => {
+		setFileRoot(cwd?.root);
+		const path = cwd?.cwd ? asDirectoryPath(cwd.cwd) : (fileRoot?.path ?? '/');
+		return clampToFileRoot(path);
+	};
+
 	const buildBreadcrumbs = (path: string) => {
+		if (fileRoot) {
+			const directory = clampToFileRoot(path);
+			const relative = directory === fileRoot.path ? '' : directory.slice(fileRoot.path.length);
+			const parts = relative.split('/').filter(Boolean);
+			return parts.reduce(
+				(acc, part) => {
+					const prev = acc[acc.length - 1];
+					acc.push({ label: part, path: `${prev.path}${part}/` });
+					return acc;
+				},
+				[{ label: fileRoot.label, path: fileRoot.path }]
+			);
+		}
+
 		const parts = path.split('/').filter(Boolean);
 		const isDrive = /^[A-Za-z]:$/.test(parts[0] ?? '');
 		const root = isDrive ? { label: parts[0], path: `${parts[0]}/` } : { label: '/', path: '/' };
@@ -274,7 +367,6 @@
 	// ── File preview management ──────────────────────────────────────────
 	const clearFilePreview = () => {
 		fileContent = null;
-		filePreviewRef?.disposePanzoom();
 		if (fileImageUrl) {
 			URL.revokeObjectURL(fileImageUrl);
 			fileImageUrl = null;
@@ -301,6 +393,7 @@
 	const loadDir = async (path: string) => {
 		const terminal = selectedTerminal;
 		if (!terminal) return;
+		const directory = clampToFileRoot(path);
 
 		loading = true;
 		error = null;
@@ -308,25 +401,22 @@
 		previewPort = null;
 		clearFilePreview();
 		clearSelection();
-		currentPath = path;
-		savedPath = path;
-		pushNavHistory(path);
+		currentPath = directory;
+		savedPath = directory;
+		pushNavHistory(directory);
 
-		const result = await listFiles(terminal.url, terminal.key, path);
+		const result = await listFiles(terminal.url, terminal.key, directory, chatId ?? undefined);
 		loading = false;
 
 		// Set working directory on the terminal server (fire-and-forget)
-		setCwd(terminal.url, terminal.key, path);
+		setCwd(terminal.url, terminal.key, directory, chatId ?? undefined);
 
 		if (result === null) {
 			error =
 				'Failed to load directory. Check your Terminal connection in Settings → Integrations.';
 			entries = [];
 		} else {
-			entries = result.sort((a, b) => {
-				if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
-				return a.name.localeCompare(b.name);
-			});
+			entries = sortEntries(result);
 		}
 	};
 
@@ -347,22 +437,52 @@
 		clearFilePreview();
 
 		if (isImage(filePath)) {
-			const result = await downloadFileBlob(terminal.url, terminal.key, filePath);
+			const result = await downloadFileBlob(
+				terminal.url,
+				terminal.key,
+				filePath,
+				chatId ?? undefined
+			);
 			if (result) fileImageUrl = URL.createObjectURL(result.blob);
 		} else if (isVideo(filePath)) {
-			const result = await downloadFileBlob(terminal.url, terminal.key, filePath);
+			const result = await downloadFileBlob(
+				terminal.url,
+				terminal.key,
+				filePath,
+				chatId ?? undefined
+			);
 			if (result) fileVideoUrl = URL.createObjectURL(result.blob);
 		} else if (isAudio(filePath)) {
-			const result = await downloadFileBlob(terminal.url, terminal.key, filePath);
+			const result = await downloadFileBlob(
+				terminal.url,
+				terminal.key,
+				filePath,
+				chatId ?? undefined
+			);
 			if (result) fileAudioUrl = URL.createObjectURL(result.blob);
 		} else if (isPdf(filePath)) {
-			const result = await downloadFileBlob(terminal.url, terminal.key, filePath);
+			const result = await downloadFileBlob(
+				terminal.url,
+				terminal.key,
+				filePath,
+				chatId ?? undefined
+			);
 			if (result) filePdfData = await result.blob.arrayBuffer();
 		} else if (isSqlite(filePath)) {
-			const result = await downloadFileBlob(terminal.url, terminal.key, filePath);
+			const result = await downloadFileBlob(
+				terminal.url,
+				terminal.key,
+				filePath,
+				chatId ?? undefined
+			);
 			if (result) fileSqliteData = await result.blob.arrayBuffer();
 		} else if (isOffice(filePath)) {
-			const result = await downloadFileBlob(terminal.url, terminal.key, filePath);
+			const result = await downloadFileBlob(
+				terminal.url,
+				terminal.key,
+				filePath,
+				chatId ?? undefined
+			);
 			if (result) {
 				const ext = getFileExt(filePath);
 				const arrayBuffer = await result.blob.arrayBuffer();
@@ -381,7 +501,8 @@
 							selectedExcelSheet = excelSheetNames[0];
 							const { excelToTable } = await import('$lib/utils/excelToTable');
 							const result = await excelToTable(wb.Sheets[selectedExcelSheet]);
-							fileOfficeHtml = result.html;
+							const DOMPurify = (await import('dompurify')).default;
+							fileOfficeHtml = DOMPurify.sanitize(result.html);
 						}
 					} else if (ext === 'pptx') {
 						const { pptxToImages } = await import('$lib/utils/pptxToHtml');
@@ -395,7 +516,7 @@
 				}
 			}
 		} else {
-			fileContent = await readFile(terminal.url, terminal.key, filePath);
+			fileContent = await readFile(terminal.url, terminal.key, filePath, chatId ?? undefined);
 		}
 		fileLoading = false;
 	};
@@ -408,7 +529,7 @@
 		const isDir = path.endsWith('/');
 		const result = isDir
 			? await archiveFromTerminal(terminal.url, terminal.key, [path.replace(/\/$/, '')])
-			: await downloadFileBlob(terminal.url, terminal.key, path);
+			: await downloadFileBlob(terminal.url, terminal.key, path, chatId ?? undefined);
 		if (!result) return;
 		const url = URL.createObjectURL(result.blob);
 		const a = document.createElement('a');
@@ -440,7 +561,7 @@
 
 		uploading = true;
 		for (const file of droppedFiles) {
-			await uploadToTerminal(terminal.url, terminal.key, currentPath, file);
+			await uploadToTerminal(terminal.url, terminal.key, currentPath, file, chatId ?? undefined);
 		}
 		uploading = false;
 		await loadDir(currentPath);
@@ -452,7 +573,7 @@
 
 		uploading = true;
 		for (const file of files) {
-			await uploadToTerminal(terminal.url, terminal.key, currentPath, file);
+			await uploadToTerminal(terminal.url, terminal.key, currentPath, file, chatId ?? undefined);
 		}
 		uploading = false;
 		await loadDir(currentPath);
@@ -475,7 +596,12 @@
 		const terminal = selectedTerminal;
 		if (!terminal) return;
 
-		const result = await createDirectory(terminal.url, terminal.key, `${currentPath}${name}`);
+		const result = await createDirectory(
+			terminal.url,
+			terminal.key,
+			`${currentPath}${name}`,
+			chatId ?? undefined
+		);
 		toast[result ? 'success' : 'error'](
 			$i18n.t(result ? 'Folder created' : 'Failed to create folder')
 		);
@@ -510,7 +636,7 @@
 		const terminal = selectedTerminal;
 		if (!terminal) return;
 
-		const result = await deleteEntry(terminal.url, terminal.key, path);
+		const result = await deleteEntry(terminal.url, terminal.key, path, chatId ?? undefined);
 		toast[result ? 'success' : 'error'](
 			$i18n.t(result ? '{{name}} deleted' : 'Failed to delete {{name}}', { name })
 		);
@@ -536,7 +662,13 @@
 		const sourceDir = source.endsWith('/') ? source : source + '/';
 		if (destFolder.startsWith(sourceDir)) return;
 
-		const result = await moveEntry(terminal.url, terminal.key, source, destination);
+		const result = await moveEntry(
+			terminal.url,
+			terminal.key,
+			source,
+			destination,
+			chatId ?? undefined
+		);
 		if ('error' in result) {
 			toast.error(result.error);
 		} else {
@@ -555,7 +687,13 @@
 
 		if (oldPath === destination) return;
 
-		const result = await moveEntry(terminal.url, terminal.key, oldPath, destination);
+		const result = await moveEntry(
+			terminal.url,
+			terminal.key,
+			oldPath,
+			destination,
+			chatId ?? undefined
+		);
 		if ('error' in result) {
 			toast.error(result.error);
 		} else {
@@ -696,6 +834,10 @@
 			handledDisplayFile = true;
 			showFileNavPath.set(null);
 			filePath = normalizePath(filePath);
+			if (!isInsideFileRoot(filePath)) {
+				await loadDir(fileRoot?.path ?? '/');
+				return;
+			}
 
 			const lastSlash = filePath.lastIndexOf('/');
 			const dir = lastSlash > 0 ? filePath.substring(0, lastSlash + 1) : '/';
@@ -718,6 +860,10 @@
 			if (!filePath || !selectedTerminal) return;
 			showFileNavDir.set(null);
 			filePath = normalizePath(filePath);
+			if (!isInsideFileRoot(filePath)) {
+				await loadDir(fileRoot?.path ?? '/');
+				return;
+			}
 
 			const lastSlash = filePath.lastIndexOf('/');
 			const dir = lastSlash > 0 ? filePath.substring(0, lastSlash + 1) : '/';
@@ -736,13 +882,20 @@
 
 		if (!handledDisplayFile) {
 			loading = true;
-			if (savedPath === '/') {
-				const rawCwd = await getCwd(terminal.url, terminal.key);
-				const cwd = rawCwd ? normalizePath(rawCwd) : null;
-				if (cwd) savedPath = cwd.endsWith('/') ? cwd : cwd + '/';
+
+			// Discover server features on initial mount
+			const config = await getTerminalConfig(terminal.url, terminal.key);
+			terminalEnabled = config?.features?.terminal !== false;
+
+			if (chatId || savedPath === '/') {
+				// Fetch session-specific cwd from the server (or global default for new chats)
+				savedPath = applyCwd(await getCwd(terminal.url, terminal.key, chatId ?? undefined));
 			}
+			savedPath = clampToFileRoot(savedPath);
 			loadDir(savedPath);
 		}
+
+		mounted = true;
 
 		const onKeyDown = (e: KeyboardEvent) => {
 			if (e.key === 'Shift') shiftKey = true;
@@ -845,6 +998,8 @@
 				{loading}
 				{canGoBack}
 				{canGoForward}
+				{sortBy}
+				{sortAsc}
 				onGoBack={goBack}
 				onGoForward={goForward}
 				onNavigate={loadDir}
@@ -861,6 +1016,7 @@
 				onUploadFiles={handleUploadFiles}
 				onDownloadDir={() => downloadFile(currentPath)}
 				onMove={handleMove}
+				onSort={toggleSort}
 			>
 				{#if fileImageUrl !== null || (fileOfficeSlides !== null && fileOfficeSlides.length > 0)}
 					<Tooltip content={$i18n.t('Reset view')}>
@@ -1180,7 +1336,8 @@
 						selectedExcelSheet = sheet;
 						const { excelToTable } = await import('$lib/utils/excelToTable');
 						const result = await excelToTable(excelWorkbook.Sheets[sheet]);
-						fileOfficeHtml = result.html;
+						const DOMPurify = (await import('dompurify')).default;
+						fileOfficeHtml = DOMPurify.sanitize(result.html);
 					}}
 					baseUrl={selectedTerminal?.url ?? ''}
 					apiKey={selectedTerminal?.key ?? ''}
@@ -1282,6 +1439,7 @@
 									onRename={handleRename}
 									onSelect={handleSelect}
 									onLongPress={enterSelectionMode}
+									showDate={sortBy === 'date'}
 								/>
 							{/each}
 						</ul>
@@ -1368,6 +1526,7 @@
 							overlay={overlay || isDraggingHandle}
 							bind:connected={terminalConnected}
 							bind:connecting={terminalConnecting}
+							{chatId}
 						/>
 					</div>
 				{/if}

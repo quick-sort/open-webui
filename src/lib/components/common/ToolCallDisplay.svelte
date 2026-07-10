@@ -44,11 +44,19 @@
 	const componentId = id || uuidv4();
 
 	function parseJSONString(str: string) {
-		try {
-			return parseJSONString(JSON.parse(str));
-		} catch (e) {
-			return str;
+		// Iteratively unwrap nested JSON-encoded strings. Same result as the previous
+		// recursive form, but without the stack-overflow-and-recover path it hit on
+		// scalar values (e.g. JSON.parse('5') -> 5 -> infinite self-recursion).
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		let value: any = str;
+		while (typeof value === 'string') {
+			try {
+				value = JSON.parse(value);
+			} catch {
+				break;
+			}
 		}
+		return value;
 	}
 
 	function formatJSONString(str: string) {
@@ -76,10 +84,13 @@
 		}
 	}
 
-	$: args = decode(attributes?.arguments ?? '');
-	$: result = decode(attributes?.result ?? '');
+	export let resultContent: string = '';
+
+	$: result = resultContent || decode(attributes?.result ?? '');
 	$: files = parseJSONString(decode(attributes?.files ?? ''));
 	$: embeds = parseJSONString(decode(attributes?.embeds ?? ''));
+	$: args =
+		open || (Array.isArray(embeds) && embeds.length > 0) ? decode(attributes?.arguments ?? '') : '';
 	$: isDone = attributes?.done === 'true';
 	$: isExecuting = attributes?.done && attributes?.done !== 'true';
 
@@ -198,10 +209,10 @@
 								</div>
 							{:else}
 								<div class="tool-call-body w-full max-w-none!">
-									<Markdown
-										id={`${componentId}-tool-call-args`}
-										content={`\`\`\`json\n${formatJSONString(args)}\n\`\`\``}
-									/>
+									<pre
+										class="text-xs text-gray-600 dark:text-gray-300 whitespace-pre font-mono bg-gray-50 dark:bg-gray-900 rounded-lg p-2.5 overflow-x-auto">{formatJSONString(
+											args
+										)}</pre>
 								</div>
 							{/if}
 						</div>
@@ -217,10 +228,12 @@
 							</div>
 							<div class="w-full max-w-none!">
 								{#if typeof parsedResult === 'object' && parsedResult !== null}
-									<Markdown
-										id={`${componentId}-tool-call-result`}
-										content={`\`\`\`json\n${JSON.stringify(parsedResult, null, 2)}\n\`\`\``}
-									/>
+									<pre
+										class="text-xs text-gray-600 dark:text-gray-300 whitespace-pre font-mono bg-gray-50 dark:bg-gray-900 rounded-lg p-2.5 overflow-x-auto">{JSON.stringify(
+											parsedResult,
+											null,
+											2
+										)}</pre>
 								{:else}
 									{@const resultStr = String(parsedResult)}
 									{@const isTruncated = resultStr.length > RESULT_PREVIEW_LIMIT && !expandedResult}

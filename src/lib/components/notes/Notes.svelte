@@ -30,13 +30,15 @@
 	$: loadLocale($i18n.languages);
 
 	import { goto } from '$app/navigation';
-	import { WEBUI_NAME, config, user } from '$lib/stores';
+	import { WEBUI_NAME, config, user, pinnedNotes } from '$lib/stores';
 	import {
 		createNewNote,
 		deleteNoteById,
 		getNoteById,
 		getNoteList,
-		searchNotes
+		searchNotes,
+		toggleNotePinnedStatusById,
+		getPinnedNoteList
 	} from '$lib/apis/notes';
 	import { capitalizeFirstLetter, copyToClipboard, getTimeRange } from '$lib/utils';
 	import { downloadPdf, createNoteHandler } from './utils';
@@ -109,6 +111,7 @@
 		});
 
 		if (res) {
+			pinnedNotes.set(await getPinnedNoteList(localStorage.token).catch(() => []));
 			init();
 		}
 	};
@@ -178,14 +181,14 @@
 		await getItemsPage();
 	};
 
-	$: if (query !== undefined) {
+	const handleSearchInput = () => {
 		clearTimeout(searchDebounceTimer);
 		searchDebounceTimer = setTimeout(() => {
 			if (loaded) {
 				init();
 			}
 		}, 300);
-	}
+	};
 
 	$: if (loaded && sortKey !== undefined && permission !== undefined && viewOption !== undefined) {
 		init();
@@ -378,6 +381,7 @@
 					<input
 						class=" w-full text-sm py-1 rounded-r-xl outline-hidden bg-transparent"
 						bind:value={query}
+						on:input={handleSearchInput}
 						placeholder={$i18n.t('Search Notes')}
 					/>
 
@@ -387,6 +391,7 @@
 								class="p-0.5 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900 transition"
 								on:click={() => {
 									query = '';
+									handleSearchInput();
 								}}
 							>
 								<XMark className="size-3" strokeWidth="2" />
@@ -540,6 +545,14 @@
 																			selectedNote = note;
 																			showDeleteConfirm = true;
 																		}}
+																		isPinned={note.is_pinned ?? false}
+																		onPin={async () => {
+																			await toggleNotePinnedStatusById(localStorage.token, note.id);
+																			pinnedNotes.set(
+																				await getPinnedNoteList(localStorage.token).catch(() => [])
+																			);
+																			init();
+																		}}
 																	>
 																		<button
 																			class="self-center w-fit text-sm p-1 dark:text-gray-300 dark:hover:text-white hover:bg-black/5 dark:hover:bg-white/5 rounded-xl"
@@ -601,6 +614,14 @@
 																		onDelete={() => {
 																			selectedNote = note;
 																			showDeleteConfirm = true;
+																		}}
+																		isPinned={note.is_pinned ?? false}
+																		onPin={async () => {
+																			await toggleNotePinnedStatusById(localStorage.token, note.id);
+																			pinnedNotes.set(
+																				await getPinnedNoteList(localStorage.token).catch(() => [])
+																			);
+																			init();
 																		}}
 																	>
 																		<button

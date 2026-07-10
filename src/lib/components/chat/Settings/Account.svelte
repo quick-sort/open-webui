@@ -227,7 +227,7 @@
 			</div>
 		</div>
 
-		{#if $config?.features?.enable_user_webhooks}
+		{#if $config?.features?.enable_user_webhooks && ($user?.role === 'admin' || ($user?.permissions?.features?.webhooks ?? false))}
 			<div class="mt-2">
 				<div class="flex flex-col w-full">
 					<div class=" mb-1 text-xs font-medium">{$i18n.t('Notification Webhook')}</div>
@@ -248,7 +248,7 @@
 
 		<hr class="border-gray-50 dark:border-gray-850/30 my-4" />
 
-		{#if $config?.features.enable_login_form}
+		{#if $config?.features.enable_login_form && $config?.features.enable_password_change_form}
 			<div class="mt-2">
 				<UpdatePassword />
 			</div>

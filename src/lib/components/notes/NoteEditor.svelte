@@ -8,6 +8,7 @@
 
 	import { marked } from 'marked';
 	import { toast } from 'svelte-sonner';
+	import equal from 'fast-deep-equal';
 
 	import { goto } from '$app/navigation';
 
@@ -35,7 +36,8 @@
 		showSidebar,
 		socket,
 		user,
-		WEBUI_NAME
+		WEBUI_NAME,
+		pinnedNotes
 	} from '$lib/stores';
 
 	import { downloadPdf } from './utils';
@@ -64,7 +66,9 @@
 		deleteNoteById,
 		getNoteById,
 		updateNoteById,
-		updateNoteAccessGrants
+		updateNoteAccessGrants,
+		toggleNotePinnedStatusById,
+		getPinnedNoteList
 	} from '$lib/apis/notes';
 
 	import RichTextInput from '../common/RichTextInput.svelte';
@@ -215,6 +219,10 @@
 			}).catch((e) => {
 				toast.error(`${e}`);
 			});
+
+			if (res) {
+				pinnedNotes.set(await getPinnedNoteList(localStorage.token).catch(() => []));
+			}
 		}, 200);
 	};
 
@@ -223,7 +231,7 @@
 	}
 
 	function areContentsEqual(a, b) {
-		return JSON.stringify(a) === JSON.stringify(b);
+		return equal(a, b);
 	}
 
 	function insertNoteVersion(note) {
@@ -614,6 +622,7 @@ ${content}
 		});
 
 		if (res) {
+			pinnedNotes.set(await getPinnedNoteList(localStorage.token).catch(() => []));
 			toast.success($i18n.t('Note deleted successfully'));
 			goto('/notes');
 		} else {
@@ -1088,6 +1097,12 @@ Provide the enhanced notes in markdown format. Use markdown syntax for headings,
 									onDelete={() => {
 										showDeleteConfirm = true;
 									}}
+									isPinned={$pinnedNotes.some((n) => n.id === note.id)}
+									onPin={async () => {
+										await toggleNotePinnedStatusById(localStorage.token, note.id);
+										note = await getNoteById(localStorage.token, note.id);
+										pinnedNotes.set(await getPinnedNoteList(localStorage.token).catch(() => []));
+									}}
 								>
 									<div class="p-1 bg-transparent hover:bg-white/5 transition rounded-lg">
 										<EllipsisHorizontal className="size-5" />
@@ -1428,7 +1443,35 @@ Provide the enhanced notes in markdown format. Use markdown syntax for headings,
 				bind:show={showPanel}
 				bind:selectedModelId
 				bind:files
-				onUpdate={() => {
+				onUpdate={(updatedFiles) => {
+					files = updatedFiles;
+					note.data.files = files.length > 0 ? files : null;
+
+					if (editor) {
+						editor.storage.files = files;
+						const fileIds = new Set(files.map((file) => file.id));
+						const ranges = [];
+
+						editor.state.doc.descendants((node, pos) => {
+							const src = node.attrs.src;
+							if (
+								node.type.name === 'image' &&
+								src?.startsWith('data://') &&
+								!fileIds.has(src.slice('data://'.length))
+							) {
+								ranges.push([pos, pos + node.nodeSize]);
+							}
+						});
+
+						if (ranges.length > 0) {
+							let transaction = editor.state.tr;
+							ranges.reverse().forEach(([from, to]) => {
+								transaction = transaction.delete(from, to);
+							});
+							editor.view.dispatch(transaction);
+						}
+					}
+
 					changeDebounceHandler();
 				}}
 			/>
