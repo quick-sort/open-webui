@@ -599,15 +599,26 @@ ENABLE_MILVUS_MULTITENANCY_MODE = os.getenv('ENABLE_MILVUS_MULTITENANCY_MODE', '
 MILVUS_COLLECTION_PREFIX = os.getenv('MILVUS_COLLECTION_PREFIX', 'open_webui')
 
 # Qdrant
-QDRANT_URI = os.getenv('QDRANT_URI', None)
-QDRANT_API_KEY = os.getenv('QDRANT_API_KEY', None)
-QDRANT_ON_DISK = os.getenv('QDRANT_ON_DISK', 'false').lower() == 'true'
-QDRANT_PREFER_GRPC = os.getenv('QDRANT_PREFER_GRPC', 'false').lower() == 'true'
-QDRANT_GRPC_PORT = int(os.getenv('QDRANT_GRPC_PORT', '6334'))
-QDRANT_TIMEOUT = int(os.getenv('QDRANT_TIMEOUT', '5'))
-QDRANT_HNSW_M = int(os.getenv('QDRANT_HNSW_M', '16'))
-ENABLE_QDRANT_MULTITENANCY_MODE = os.getenv('ENABLE_QDRANT_MULTITENANCY_MODE', 'true').lower() == 'true'
-QDRANT_COLLECTION_PREFIX = os.getenv('QDRANT_COLLECTION_PREFIX', 'open-webui')
+QDRANT_URI = os.environ.get('QDRANT_URI', None)
+QDRANT_API_KEY = os.environ.get('QDRANT_API_KEY', None)
+QDRANT_ON_DISK = os.environ.get('QDRANT_ON_DISK', 'false').lower() == 'true'
+QDRANT_PREFER_GRPC = os.environ.get('QDRANT_PREFER_GRPC', 'false').lower() == 'true'
+QDRANT_GRPC_PORT = int(os.environ.get('QDRANT_GRPC_PORT', '6334'))
+QDRANT_GRPC_HTTPS = os.environ.get('QDRANT_GRPC_HTTPS', 'true').lower() == 'true'
+QDRANT_TIMEOUT = int(os.environ.get('QDRANT_TIMEOUT', '5'))
+QDRANT_HNSW_M = int(os.environ.get('QDRANT_HNSW_M', '16'))
+QDRANT_HNSW_EF_CONSTRUCT = int(os.environ.get('QDRANT_HNSW_EF_CONSTRUCT', '100'))
+QDRANT_HNSW_ON_DISK = os.environ.get('QDRANT_HNSW_ON_DISK', 'false').lower() == 'true'
+ENABLE_QDRANT_MULTITENANCY_MODE = os.environ.get('ENABLE_QDRANT_MULTITENANCY_MODE', 'true').lower() == 'true'
+QDRANT_COLLECTION_PREFIX = os.environ.get('QDRANT_COLLECTION_PREFIX', 'open-webui')
+QDRANT_QUANTIZATION = os.environ.get('QDRANT_QUANTIZATION', 'none')  # none, scalar, binary, product
+QDRANT_QUANTIZATION_SCALAR_TYPE = os.environ.get('QDRANT_QUANTIZATION_SCALAR_TYPE', 'int8')
+QDRANT_QUANTIZATION_SCALAR_QUANTILE = float(os.environ.get('QDRANT_QUANTIZATION_SCALAR_QUANTILE', '0.99'))
+QDRANT_QUANTIZATION_ALWAYS_RAM = os.environ.get('QDRANT_QUANTIZATION_ALWAYS_RAM', 'false').lower() == 'true'
+QDRANT_HYBRID_SEARCH = os.environ.get('QDRANT_HYBRID_SEARCH', 'false').lower() == 'true'
+QDRANT_SPARSE_EMBEDDING_API_URL = os.environ.get('QDRANT_SPARSE_EMBEDDING_API_URL', '')
+QDRANT_SPARSE_EMBEDDING_API_KEY = os.environ.get('QDRANT_SPARSE_EMBEDDING_API_KEY', '')
+QDRANT_SPARSE_EMBEDDING_MODEL = os.environ.get('QDRANT_SPARSE_EMBEDDING_MODEL', '')
 
 WEAVIATE_HTTP_HOST = os.getenv('WEAVIATE_HTTP_HOST', '')
 WEAVIATE_GRPC_HOST = os.getenv('WEAVIATE_GRPC_HOST', '')
@@ -2244,7 +2255,7 @@ Analyze the chat history to determine the necessity of generating search queries
 - Always prioritize providing actionable and broad queries that maximize informational coverage.
 
 ### Output:
-Strictly return in JSON format: 
+Strictly return in JSON format:
 {
   "queries": ["query1", "query2"]
 }
@@ -2263,44 +2274,44 @@ AUTOCOMPLETE_GENERATION_PROMPT_TEMPLATE = os.getenv('AUTOCOMPLETE_GENERATION_PRO
 
 
 DEFAULT_AUTOCOMPLETE_GENERATION_PROMPT_TEMPLATE = """### Task:
-You are an autocompletion system. Continue the text in `<text>` based on the **completion type** in `<type>` and the given language.  
+You are an autocompletion system. Continue the text in `<text>` based on the **completion type** in `<type>` and the given language.
 
 ### **Instructions**:
-1. Analyze `<text>` for context and meaning.  
-2. Use `<type>` to guide your output:  
-   - **General**: Provide a natural, concise continuation.  
-   - **Search Query**: Complete as if generating a realistic search query.  
-3. Start as if you are directly continuing `<text>`. Do **not** repeat, paraphrase, or respond as a model. Simply complete the text.  
+1. Analyze `<text>` for context and meaning.
+2. Use `<type>` to guide your output:
+   - **General**: Provide a natural, concise continuation.
+   - **Search Query**: Complete as if generating a realistic search query.
+3. Start as if you are directly continuing `<text>`. Do **not** repeat, paraphrase, or respond as a model. Simply complete the text.
 4. Ensure the continuation:
-   - Flows naturally from `<text>`.  
-   - Avoids repetition, overexplaining, or unrelated ideas.  
-5. If unsure, return: `{ "text": "" }`.  
+   - Flows naturally from `<text>`.
+   - Avoids repetition, overexplaining, or unrelated ideas.
+5. If unsure, return: `{ "text": "" }`.
 
 ### **Output Rules**:
 - Respond only in JSON format: `{ "text": "<your_completion>" }`.
 
 ### **Examples**:
-#### Example 1:  
-Input:  
-<type>General</type>  
-<text>The sun was setting over the horizon, painting the sky</text>  
-Output:  
+#### Example 1:
+Input:
+<type>General</type>
+<text>The sun was setting over the horizon, painting the sky</text>
+Output:
 { "text": "with vibrant shades of orange and pink." }
 
-#### Example 2:  
-Input:  
-<type>Search Query</type>  
-<text>Top-rated restaurants in</text>  
-Output:  
-{ "text": "New York City for Italian cuisine." }  
+#### Example 2:
+Input:
+<type>Search Query</type>
+<text>Top-rated restaurants in</text>
+Output:
+{ "text": "New York City for Italian cuisine." }
 
 ---
 ### Context:
 <chat_history>
 {{MESSAGES:END:6}}
 </chat_history>
-<type>{{TYPE}}</type>  
-<text>{{PROMPT}}</text>  
+<type>{{TYPE}}</type>
+<text>{{PROMPT}}</text>
 #### Output:
 """
 
@@ -2343,7 +2354,7 @@ Your task is to choose and return the correct tool(s) from the list of available
 
 - Return only the JSON object, without any additional text or explanation.
 
-- If no tools match the query, return an empty array: 
+- If no tools match the query, return an empty array:
    {
      "tool_calls": []
    }

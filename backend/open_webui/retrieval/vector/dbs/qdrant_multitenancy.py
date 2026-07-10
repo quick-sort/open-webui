@@ -6,15 +6,22 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
-import grpc
 from open_webui.config import (
     QDRANT_API_KEY,
     QDRANT_COLLECTION_PREFIX,
     QDRANT_GRPC_PORT,
-    QDRANT_HNSW_M,
+    QDRANT_GRPC_HTTPS,
     QDRANT_ON_DISK,
     QDRANT_PREFER_GRPC,
     QDRANT_TIMEOUT,
+    QDRANT_HNSW_M,
+    QDRANT_HNSW_EF_CONSTRUCT,
+    QDRANT_HNSW_ON_DISK,
+    QDRANT_QUANTIZATION,
+    QDRANT_QUANTIZATION_SCALAR_TYPE,
+    QDRANT_QUANTIZATION_SCALAR_QUANTILE,
+    QDRANT_QUANTIZATION_ALWAYS_RAM,
+    QDRANT_HYBRID_SEARCH,
     QDRANT_URI,
 )
 from open_webui.retrieval.vector.main import (
@@ -22,6 +29,12 @@ from open_webui.retrieval.vector.main import (
     SearchResult,
     VectorDBBase,
     VectorItem,
+)
+from open_webui.retrieval.vector.dbs.qdrant import (
+    _generate_sparse_vector,
+    _generate_sparse_vectors_batch,
+    DENSE_VECTOR_NAME,
+    SPARSE_VECTOR_NAME,
 )
 from qdrant_client import QdrantClient as Qclient
 from qdrant_client.http.exceptions import UnexpectedResponse
@@ -51,8 +64,16 @@ class QdrantClient(VectorDBBase):
         self.QDRANT_ON_DISK = QDRANT_ON_DISK
         self.PREFER_GRPC = QDRANT_PREFER_GRPC
         self.GRPC_PORT = QDRANT_GRPC_PORT
+        self.GRPC_HTTPS = QDRANT_GRPC_HTTPS
         self.QDRANT_TIMEOUT = QDRANT_TIMEOUT
         self.QDRANT_HNSW_M = QDRANT_HNSW_M
+        self.QDRANT_HNSW_EF_CONSTRUCT = QDRANT_HNSW_EF_CONSTRUCT
+        self.QDRANT_HNSW_ON_DISK = QDRANT_HNSW_ON_DISK
+        self.QUANTIZATION = QDRANT_QUANTIZATION
+        self.QUANTIZATION_SCALAR_TYPE = QDRANT_QUANTIZATION_SCALAR_TYPE
+        self.QUANTIZATION_SCALAR_QUANTILE = QDRANT_QUANTIZATION_SCALAR_QUANTILE
+        self.QUANTIZATION_ALWAYS_RAM = QDRANT_QUANTIZATION_ALWAYS_RAM
+        self.HYBRID_SEARCH = QDRANT_HYBRID_SEARCH
 
         if not self.QDRANT_URI:
             raise ValueError('QDRANT_URI is not set. Please configure it in the environment variables.')
@@ -70,6 +91,7 @@ class QdrantClient(VectorDBBase):
                 prefer_grpc=self.PREFER_GRPC,
                 api_key=self.QDRANT_API_KEY,
                 timeout=self.QDRANT_TIMEOUT,
+                https=self.GRPC_HTTPS,
             )
             if self.PREFER_GRPC
             else Qclient(
@@ -130,23 +152,68 @@ class QdrantClient(VectorDBBase):
         else:
             return self.KNOWLEDGE_COLLECTION, tenant_id
 
+    def _get_quantization_config(self) -> Optional[models.QuantizationConfig]:
+        match self.QUANTIZATION:
+            case 'scalar':
+                return models.ScalarQuantization(
+                    scalar=models.ScalarQuantizationConfig(
+                        type=models.ScalarType.INT8,
+                        quantile=self.QUANTIZATION_SCALAR_QUANTILE,
+                        always_ram=self.QUANTIZATION_ALWAYS_RAM,
+                    ),
+                )
+            case 'binary':
+                return models.BinaryQuantization(
+                    binary=models.BinaryQuantizationConfig(
+                        always_ram=self.QUANTIZATION_ALWAYS_RAM,
+                    ),
+                )
+            case 'product':
+                return models.ProductQuantization(
+                    product=models.ProductQuantizationConfig(
+                        num_subquantizers=256,
+                        num_centroids=16,
+                    ),
+                )
+            case _:
+                return None
+
     def _create_multi_tenant_collection(self, mt_collection_name: str, dimension: int = DEFAULT_DIMENSION):
         """
         Creates a collection with multi-tenancy configuration and payload indexes for tenant_id and metadata fields.
         """
-        self.client.create_collection(
-            collection_name=mt_collection_name,
-            vectors_config=models.VectorParams(
+        if self.HYBRID_SEARCH:
+            vectors_config = {
+                DENSE_VECTOR_NAME: models.VectorParams(
+                    size=dimension,
+                    distance=models.Distance.COSINE,
+                    on_disk=self.QDRANT_ON_DISK,
+                ),
+            }
+            sparse_vectors_config = {
+                SPARSE_VECTOR_NAME: models.SparseVectorParams(),
+            }
+        else:
+            vectors_config = models.VectorParams(
                 size=dimension,
                 distance=models.Distance.COSINE,
                 on_disk=self.QDRANT_ON_DISK,
-            ),
+            )
+            sparse_vectors_config = None
+
+        self.client.create_collection(
+            collection_name=mt_collection_name,
+            vectors_config=vectors_config,
+            sparse_vectors_config=sparse_vectors_config,
             # Disable global index building due to multitenancy
             # For more details https://qdrant.tech/documentation/guides/multiple-partitions/#calibrate-performance
             hnsw_config=models.HnswConfigDiff(
                 payload_m=self.QDRANT_HNSW_M,
+                ef_construct=self.QDRANT_HNSW_EF_CONSTRUCT,
+                on_disk=self.QDRANT_HNSW_ON_DISK,
                 m=0,
             ),
+            quantization_config=self._get_quantization_config(),
         )
         log.info(f'Multi-tenant collection {mt_collection_name} created with dimension {dimension}!')
 
@@ -174,18 +241,37 @@ class QdrantClient(VectorDBBase):
         """
         Create point structs from vector items with tenant ID.
         """
-        return [
-            PointStruct(
-                id=item['id'],
-                vector=item['vector'],
-                payload={
-                    'text': item['text'],
-                    'metadata': item['metadata'],
-                    TENANT_ID_FIELD: tenant_id,
-                },
-            )
-            for item in items
-        ]
+        if self.HYBRID_SEARCH:
+            texts = [item['text'] for item in items]
+            sparse_vectors = _generate_sparse_vectors_batch(texts)
+            points = []
+            for item, sv in zip(items, sparse_vectors):
+                vector = {DENSE_VECTOR_NAME: item['vector']}
+                if sv is not None:
+                    vector[SPARSE_VECTOR_NAME] = sv
+                points.append(PointStruct(
+                    id=item['id'],
+                    vector=vector,
+                    payload={
+                        'text': item['text'],
+                        'metadata': item['metadata'],
+                        TENANT_ID_FIELD: tenant_id,
+                    },
+                ))
+            return points
+        else:
+            return [
+                PointStruct(
+                    id=item['id'],
+                    vector=item['vector'],
+                    payload={
+                        'text': item['text'],
+                        'metadata': item['metadata'],
+                        TENANT_ID_FIELD: tenant_id,
+                    },
+                )
+                for item in items
+            ]
 
     def _ensure_collection(self, mt_collection_name: str, dimension: int = DEFAULT_DIMENSION):
         """
@@ -247,6 +333,7 @@ class QdrantClient(VectorDBBase):
         vectors: List[List[float | int]],
         filter: Optional[Dict] = None,
         limit: int = 10,
+        **kwargs,
     ) -> Optional[SearchResult]:
         """
         Search for the nearest neighbor items based on the vectors with tenant isolation.
@@ -258,13 +345,52 @@ class QdrantClient(VectorDBBase):
             log.debug(f"Collection {mt_collection} doesn't exist, search returns None")
             return None
 
-        tenant_filter = _tenant_filter(tenant_id)
-        query_response = self.client.query_points(
-            collection_name=mt_collection,
-            query=vectors[0],
-            limit=limit,
-            query_filter=models.Filter(must=[tenant_filter]),
-        )
+        tenant_filter = models.Filter(must=[_tenant_filter(tenant_id)])
+        query_text = kwargs.get('query_text')
+
+        # Hybrid search: prefetch dense + sparse, fuse with RRF
+        if self.HYBRID_SEARCH and query_text:
+            sparse_vector = _generate_sparse_vector(query_text)
+            if sparse_vector is not None:
+                prefetch_limit = limit * 2
+                query_response = self.client.query_points(
+                    collection_name=mt_collection,
+                    prefetch=[
+                        models.Prefetch(
+                            query=vectors[0],
+                            using=DENSE_VECTOR_NAME,
+                            limit=prefetch_limit,
+                            filter=tenant_filter,
+                        ),
+                        models.Prefetch(
+                            query=sparse_vector,
+                            using=SPARSE_VECTOR_NAME,
+                            limit=prefetch_limit,
+                            filter=tenant_filter,
+                        ),
+                    ],
+                    query=models.FusionQuery(fusion=models.Fusion.RRF),
+                    limit=limit,
+                )
+                get_result = self._result_to_get_result(query_response.points)
+                return SearchResult(
+                    ids=get_result.ids,
+                    documents=get_result.documents,
+                    metadatas=get_result.metadatas,
+                    distances=[[(point.score + 1.0) / 2.0 for point in query_response.points]],
+                )
+
+        # Fallback: dense-only search
+        query_args = {
+            'collection_name': mt_collection,
+            'query': vectors[0],
+            'limit': limit,
+            'query_filter': tenant_filter,
+        }
+        if self.HYBRID_SEARCH:
+            query_args['using'] = DENSE_VECTOR_NAME
+
+        query_response = self.client.query_points(**query_args)
         get_result = self._result_to_get_result(query_response.points)
         return SearchResult(
             ids=get_result.ids,

@@ -1601,6 +1601,7 @@ def save_docs_to_vector_db(
     split: bool = True,
     add: bool = False,
     user=None,
+    embedding_texts: Optional[list[str]] = None,
 ) -> bool:
     def _get_docs_info(docs: list[Document]) -> str:
         docs_info = set()
@@ -1766,9 +1767,19 @@ def save_docs_to_vector_db(
         # This allows the main loop to stay responsive to health checks during long operations
         embedding_timeout = RAG_EMBEDDING_TIMEOUT
 
+        # Allow callers to embed against a different text than what is stored
+        # (e.g. Q&A entries: embed the question, store question+answer).
+        # Falls back to `texts` when not supplied or when length doesn't match
+        # post-split chunks, preserving prior behavior.
+        texts_for_embedding = (
+            embedding_texts
+            if embedding_texts is not None and len(embedding_texts) == len(texts)
+            else texts
+        )
+
         future = asyncio.run_coroutine_threadsafe(
             embedding_function(
-                list(map(lambda x: x.replace('\n', ' '), texts)),
+                list(map(lambda x: x.replace('\n', ' '), texts_for_embedding)),
                 prefix=RAG_EMBEDDING_CONTENT_PREFIX,
                 user=user,
             ),
@@ -2054,7 +2065,10 @@ async def process_file(
 class ProcessTextForm(BaseModel):
     name: str
     content: str
-    collection_name: str | None = None
+    collection_name: Optional[str] = None
+    embedding_content: Optional[str] = None
+    metadata: Optional[dict] = None
+    split: Optional[bool] = True
 
 
 @router.post('/process/text')
@@ -2069,17 +2083,31 @@ async def process_text(
     else:
         await _validate_collection_access([collection_name], user, access_type='write')
 
+    extra_metadata = form_data.metadata or {}
     docs = [
         Document(
             page_content=form_data.content,
-            metadata={'name': form_data.name, 'created_by': user.id},
+            metadata={'name': form_data.name, 'created_by': user.id, **extra_metadata},
         )
     ]
     text_content = form_data.content
     log.debug(f'text_content: {text_content}')
 
+    embedding_texts = (
+        [form_data.embedding_content] if form_data.embedding_content else None
+    )
+
     config = await get_retrieval_config()
-    result = await run_in_threadpool(save_docs_to_vector_db, request, docs, collection_name, config, user=user)
+    result = await run_in_threadpool(
+        save_docs_to_vector_db,
+        request,
+        docs,
+        collection_name,
+        config,
+        user=user,
+        split=bool(form_data.split),
+        embedding_texts=embedding_texts,
+    )
     if result:
         await publish_event(
             request,
@@ -2738,6 +2766,7 @@ async def query_doc_handler(
                 query_embedding=query_embedding,
                 k=form_data.k if form_data.k else config.TOP_K,
                 user=user,
+                query_text=form_data.query,
             )
     except HTTPException:
         raise
