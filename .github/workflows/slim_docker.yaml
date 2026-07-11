@@ -115,6 +115,7 @@ jobs:
           context: .
           platforms: linux/amd64
           push: true
+          provenance: false
           labels: ${{ steps.meta.outputs.labels }}
           tags: ${{ steps.meta.outputs.tags }}
           cache-from: type=gha
