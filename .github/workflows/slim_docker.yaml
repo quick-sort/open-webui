@@ -1,0 +1,124 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Slim Docker — CI checks then build amd64 slim image, push to ghcr.io
+# Build only runs if all CI checks pass
+# Triggers on push to main, version tags (v*), and manual dispatch
+# ─────────────────────────────────────────────────────────────────────────────
+name: Slim Docker
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: slim-docker-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  backend-ci:
+    name: Backend CI (ruff)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install ruff
+        run: pip install "ruff>=0.15.5"
+
+      - name: Verify formatting
+        run: ruff format --check . --exclude .venv --exclude venv
+
+      - name: Detect logic errors
+        run: ruff check --select=F --ignore=F401,F403,F405,F541,F811,F841 --output-format=github .
+
+  frontend-ci:
+    name: Frontend CI (format/build/test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm ci --force
+
+      - name: Verify code formatting
+        run: npm run format
+
+      - name: Verify i18n strings
+        run: npm run i18n:parse
+
+      - name: Ensure working tree is clean
+        run: git diff --exit-code
+
+      - name: Production build
+        run: npm run build
+
+      - name: Unit tests
+        run: npm run test:frontend
+
+  build-and-push:
+    name: Build & push slim image
+    needs: [backend-ci, frontend-ci]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Lowercase image name
+        run: echo "IMAGE_NAME=${IMAGE_NAME,,}" >> $GITHUB_ENV
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha,prefix=git-
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+          flavor: |
+            latest=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build and push slim image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILD_HASH=${{ github.sha }}
+            USE_SLIM=true
