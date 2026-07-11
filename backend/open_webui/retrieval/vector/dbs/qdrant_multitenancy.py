@@ -249,15 +249,17 @@ class QdrantClient(VectorDBBase):
                 vector = {DENSE_VECTOR_NAME: item['vector']}
                 if sv is not None:
                     vector[SPARSE_VECTOR_NAME] = sv
-                points.append(PointStruct(
-                    id=item['id'],
-                    vector=vector,
-                    payload={
-                        'text': item['text'],
-                        'metadata': item['metadata'],
-                        TENANT_ID_FIELD: tenant_id,
-                    },
-                ))
+                points.append(
+                    PointStruct(
+                        id=item['id'],
+                        vector=vector,
+                        payload={
+                            'text': item['text'],
+                            'metadata': item['metadata'],
+                            TENANT_ID_FIELD: tenant_id,
+                        },
+                    )
+                )
             return points
         else:
             return [

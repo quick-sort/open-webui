@@ -102,15 +102,19 @@ def _generate_sparse_vectors_batch(texts: list[str]) -> list[Optional[models.Spa
         for item in data['data']:
             embedding = item['embedding']
             if isinstance(embedding, dict):
-                results.append(models.SparseVector(
-                    indices=embedding['indices'],
-                    values=embedding['values'],
-                ))
+                results.append(
+                    models.SparseVector(
+                        indices=embedding['indices'],
+                        values=embedding['values'],
+                    )
+                )
             elif isinstance(embedding, list) and embedding and isinstance(embedding[0], dict):
-                results.append(models.SparseVector(
-                    indices=[e['index'] for e in embedding],
-                    values=[e['value'] for e in embedding],
-                ))
+                results.append(
+                    models.SparseVector(
+                        indices=[e['index'] for e in embedding],
+                        values=[e['value'] for e in embedding],
+                    )
+                )
             else:
                 results.append(None)
         return results
@@ -277,11 +281,13 @@ class QdrantClient(VectorDBBase):
                 vector = {DENSE_VECTOR_NAME: item['vector']}
                 if sv is not None:
                     vector[SPARSE_VECTOR_NAME] = sv
-                points.append(PointStruct(
-                    id=item['id'],
-                    vector=vector,
-                    payload={'text': item['text'], 'metadata': item['metadata']},
-                ))
+                points.append(
+                    PointStruct(
+                        id=item['id'],
+                        vector=vector,
+                        payload={'text': item['text'], 'metadata': item['metadata']},
+                    )
+                )
             return points
         else:
             return [

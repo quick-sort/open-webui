@@ -3,6 +3,9 @@ pnpm-lock.yaml
 package-lock.json
 yarn.lock
 
+# Local notes / docs — not subject to formatting
+TODO/
+
 # Copy of .gitignore
 .DS_Store
 node_modules

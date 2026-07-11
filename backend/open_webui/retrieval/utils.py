@@ -293,7 +293,9 @@ class VectorSearchRetriever(BaseRetriever):
         return _search_result_to_documents(result)
 
 
-def query_doc(collection_name: str, query_embedding: list[float], k: int, user: UserModel = None, query_text: str = None):
+def query_doc(
+    collection_name: str, query_embedding: list[float], k: int, user: UserModel = None, query_text: str = None
+):
     try:
         log.debug(f'query_doc:doc {collection_name}')
         result = VECTOR_DB_CLIENT.search(

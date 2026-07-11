@@ -1772,9 +1772,7 @@ def save_docs_to_vector_db(
         # Falls back to `texts` when not supplied or when length doesn't match
         # post-split chunks, preserving prior behavior.
         texts_for_embedding = (
-            embedding_texts
-            if embedding_texts is not None and len(embedding_texts) == len(texts)
-            else texts
+            embedding_texts if embedding_texts is not None and len(embedding_texts) == len(texts) else texts
         )
 
         future = asyncio.run_coroutine_threadsafe(
@@ -2093,9 +2091,7 @@ async def process_text(
     text_content = form_data.content
     log.debug(f'text_content: {text_content}')
 
-    embedding_texts = (
-        [form_data.embedding_content] if form_data.embedding_content else None
-    )
+    embedding_texts = [form_data.embedding_content] if form_data.embedding_content else None
 
     config = await get_retrieval_config()
     result = await run_in_threadpool(
