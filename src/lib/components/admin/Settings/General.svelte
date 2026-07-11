@@ -159,11 +159,15 @@
 
 						<div class="mt-1">
 							<div class="flex space-x-1 text-xs text-gray-500">
-								<a href="https://discord.gg/5rJgQTnV4s" target="_blank" class="underline">Discord</a>
+								<a href="https://discord.gg/5rJgQTnV4s" target="_blank" class="underline">Discord</a
+								>
 								<span>·</span>
-								<a href="https://twitter.com/OpenWebUI" target="_blank" class="underline">Twitter</a>
+								<a href="https://twitter.com/OpenWebUI" target="_blank" class="underline">Twitter</a
+								>
 								<span>·</span>
-								<a href="https://github.com/open-webui/open-webui" target="_blank" class="underline">GitHub</a>
+								<a href="https://github.com/open-webui/open-webui" target="_blank" class="underline"
+									>GitHub</a
+								>
 							</div>
 						</div>
 					</div>

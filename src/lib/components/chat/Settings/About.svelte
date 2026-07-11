@@ -127,7 +127,9 @@
 				<span>·</span>
 				<a href="https://twitter.com/OpenWebUI" target="_blank" class="underline">Twitter</a>
 				<span>·</span>
-				<a href="https://github.com/open-webui/open-webui" target="_blank" class="underline">GitHub</a>
+				<a href="https://github.com/open-webui/open-webui" target="_blank" class="underline"
+					>GitHub</a
+				>
 			</div>
 		{/if}
 

@@ -105,11 +105,7 @@
 				>
 					<div class=" flex justify-center items-center gap-3">
 						<div class="w-fit">
-							<img
-								src="/static/favicon.png"
-								alt="{url} favicon"
-								class="size-3.5"
-							/>
+							<img src="/static/favicon.png" alt="{url} favicon" class="size-3.5" />
 						</div>
 
 						<div class="w-full text-sm line-clamp-1">
